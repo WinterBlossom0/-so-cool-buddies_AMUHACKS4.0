@@ -9,12 +9,27 @@ from datetime import datetime, timedelta
 import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
+import logging
 
 # Import route modules
 from routers import weather, air_quality, sensors, waste, solar, transit, reports, alerts, chatbot, traffic
 
 # Load environment variables
 load_dotenv()
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO if os.getenv("DEBUG") == "True" else logging.WARNING,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger("smart_city")
+
+# Validate critical environment variables
+required_keys = ["GEMINI_API_KEY", "TOMTOM_API_KEY", "OPENEI_SOLAR_API_KEY"]
+missing_keys = [key for key in required_keys if not os.getenv(key) or os.getenv(key) == f"your_{key.lower()}"]
+if missing_keys:
+    logger.warning(f"Missing or invalid environment variables: {', '.join(missing_keys)}")
+    logger.warning("Some features may not work correctly. Please check your .env file.")
 
 app = FastAPI(title="Smart City API")
 
@@ -26,6 +41,19 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Global exception handler middleware
+@app.middleware("http")
+async def log_exceptions_middleware(request: Request, call_next):
+    try:
+        response = await call_next(request)
+        return response
+    except Exception as e:
+        logger.error(f"Request failed: {request.url.path} - {str(e)}", exc_info=True)
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error", "message": str(e)}
+        )
 
 # Include routers
 app.include_router(weather.router)

@@ -1,0 +1,19 @@
+{
+  "name": "smart_city",
+  "version": "1.0.0",
+  "description": "Smart City Application with React Frontend and FastAPI Backend",
+  "main": "index.js",
+  "scripts": {
+    "start": "concurrently \"npm run start-backend\" \"npm run start-frontend\"",
+    "start-frontend": "cd frontend && npm start",
+    "start-backend": "cd backend && python main.py",
+    "install-all": "npm install && cd frontend && npm install && cd ../backend && pip install -r requirements.txt",
+    "test": "concurrently \"cd frontend && npm test\" \"cd backend && pytest\""
+  },
+  "keywords": ["smart-city", "iot", "dashboard"],
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
