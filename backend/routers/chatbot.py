@@ -394,6 +394,8 @@ async def chat_with_ai(request: dict = Body(...)):
     location_data = None
     if location:
         location_data = geocode_location(location)
+        if not location_data:
+            raise HTTPException(status_code=400, detail="Could not geocode the provided location")
     
     # Get response from AI, passing location data if available
     assistant_response = await get_gemini_response(
