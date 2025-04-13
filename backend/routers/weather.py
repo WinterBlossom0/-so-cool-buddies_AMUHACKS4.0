@@ -1,8 +1,8 @@
 from fastapi import APIRouter, HTTPException, Query
 import os
 import httpx
+from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
-import random
 from datetime import datetime, timedelta
 
 # Load environment variables
@@ -14,91 +14,21 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
+# Get API key from environment variable with no default
 OPENWEATHERMAP_API_KEY = os.getenv("OPENWEATHERMAP_API_KEY")
 DEFAULT_LAT = os.getenv("DEFAULT_LAT", "51.5074")
 DEFAULT_LON = os.getenv("DEFAULT_LON", "-0.1278")
 DEFAULT_CITY = os.getenv("DEFAULT_CITY", "London")
 
-def generate_synthetic_weather_data(lat=DEFAULT_LAT, lon=DEFAULT_LON, city=DEFAULT_CITY, iterate=False):
-    """Generate synthetic weather data if API key isn't available"""
-    current_month = datetime.now().month
-    
-    # Adjust temperature ranges based on northern hemisphere seasons
-    if 3 <= current_month <= 5:  # Spring
-        temp_range = (10, 20)
-    elif 6 <= current_month <= 8:  # Summer
-        temp_range = (18, 30)
-    elif 9 <= current_month <= 11:  # Fall
-        temp_range = (5, 15)
-    else:  # Winter
-        temp_range = (-5, 10)
-    
-    conditions = ["Clear", "Clouds", "Rain", "Thunderstorm", "Snow", "Mist"]
-    condition_weights = [0.3, 0.3, 0.2, 0.1, 0.05, 0.05]
-    
-    # If iterate is True, create more realistic and varied data
-    if iterate:
-        # Introduce more variance in temperature
-        temp_range = (temp_range[0] - 2, temp_range[1] + 2)
-        
-        # Make conditions more dynamic based on time of day
-        hour = datetime.now().hour
-        if 6 <= hour <= 18:  # Daytime
-            condition_weights = [0.4, 0.3, 0.15, 0.05, 0.05, 0.05]  # More likely to be clear
-        else:  # Nighttime
-            condition_weights = [0.2, 0.3, 0.25, 0.1, 0.05, 0.1]  # More likely clouds/rain
-    
-    temp = round(random.uniform(*temp_range), 1)
-    feels_like = round(temp + random.uniform(-2, 2), 1)
-    humidity = random.randint(30, 95)
-    pressure = random.randint(995, 1025)
-    wind_speed = round(random.uniform(0, 15), 1)
-    condition = random.choices(conditions, weights=condition_weights)[0]
-    
-    # If iterate is True, add additional weather metrics for more comprehensive data
-    current_data = {
-        "temp_c": temp,
-        "feels_like_c": feels_like,
-        "humidity": humidity,
-        "pressure": pressure,
-        "wind_kph": wind_speed,
-        "condition": condition,
-        "last_updated": datetime.now().isoformat()
-    }
-    
-    if iterate:
-        current_data.update({
-            "uv_index": round(random.uniform(0, 10), 1),
-            "visibility_km": round(random.uniform(5, 20), 1),
-            "precipitation_mm": round(random.uniform(0, 5), 1) if condition in ["Rain", "Thunderstorm"] else 0,
-            "air_quality_index": random.randint(1, 100)
-        })
-    
-    return {
-        "location": {
-            "name": city,
-            "lat": float(lat),
-            "lon": float(lon),
-        },
-        "current": current_data,
-        "forecast": [
-            {
-                "date": (datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d"),
-                "max_temp_c": round(temp + random.uniform(-1, 5), 1),
-                "min_temp_c": round(temp + random.uniform(-5, 1), 1),
-                "condition": random.choices(conditions, weights=condition_weights)[0],
-                "chance_of_rain": random.randint(0, 100) if "Rain" in condition else random.randint(0, 30)
-            }
-            for i in range(1, 6)  # 5-day forecast
-        ]
-    }
-
 @router.get("/current")
-async def get_current_weather(lat: float = float(DEFAULT_LAT), lon: float = float(DEFAULT_LON), city: str = DEFAULT_CITY, iterate: bool = Query(False, description="Enable iterative data improvements")):
+async def get_current_weather(lat: float = float(DEFAULT_LAT), lon: float = float(DEFAULT_LON), city: str = DEFAULT_CITY):
     """Get current weather data for a location"""
-    if not OPENWEATHERMAP_API_KEY or OPENWEATHERMAP_API_KEY == "your_openweathermap_api_key":
-        # Return synthetic data if no API key
-        return generate_synthetic_weather_data(lat, lon, city, iterate)
+    # Require valid API key
+    if not OPENWEATHERMAP_API_KEY:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Weather API key not configured"}
+        )
         
     try:
         async with httpx.AsyncClient() as client:
@@ -113,8 +43,13 @@ async def get_current_weather(lat: float = float(DEFAULT_LAT), lon: float = floa
             )
             
             if response.status_code != 200:
-                # Fallback to synthetic data on API error
-                return generate_synthetic_weather_data(lat, lon, city, iterate)
+                return JSONResponse(
+                    status_code=response.status_code,
+                    content={
+                        "error": f"Weather API error: {response.text}",
+                        "coordinates": {"lat": lat, "lon": lon}
+                    }
+                )
                 
             data = response.json()
             
@@ -137,28 +72,26 @@ async def get_current_weather(lat: float = float(DEFAULT_LAT), lon: float = floa
                 }
             }
             
-            # If iterate=True, add extended data where available
-            if iterate and "visibility" in data:
-                result["current"].update({
-                    "visibility_km": data.get("visibility", 0) / 1000,  # Convert m to km
-                })
-                
-            if iterate and "rain" in data:
-                result["current"].update({
-                    "precipitation_mm": data.get("rain", {}).get("1h", 0),  # 1h precipitation
-                })
-                
             return result
     except Exception as e:
-        # Fallback to synthetic data on any error
-        return generate_synthetic_weather_data(lat, lon, city, iterate)
+        # Return error instead of synthetic data
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Failed to fetch weather data: {str(e)}",
+                "coordinates": {"lat": lat, "lon": lon}
+            }
+        )
 
 @router.get("/forecast")
 async def get_weather_forecast(lat: float = float(DEFAULT_LAT), lon: float = float(DEFAULT_LON), city: str = DEFAULT_CITY, iterate: bool = Query(False, description="Enable iterative data improvements")):
     """Get 5-day weather forecast for a location"""
-    if not OPENWEATHERMAP_API_KEY or OPENWEATHERMAP_API_KEY == "your_openweathermap_api_key":
-        # Return synthetic data if no API key
-        return generate_synthetic_weather_data(lat, lon, city, iterate)
+    # Require valid API key
+    if not OPENWEATHERMAP_API_KEY:
+        return JSONResponse(
+            status_code=500,
+            content={"error": "Weather API key not configured"}
+        )
         
     try:
         async with httpx.AsyncClient() as client:
@@ -173,8 +106,14 @@ async def get_weather_forecast(lat: float = float(DEFAULT_LAT), lon: float = flo
             )
             
             if response.status_code != 200:
-                # Fallback to synthetic data on API error
-                return generate_synthetic_weather_data(lat, lon, city, iterate)
+                # Return error response instead of fallback when API key exists
+                return JSONResponse(
+                    status_code=response.status_code,
+                    content={
+                        "error": f"Weather API error: {response.text}",
+                        "coordinates": {"lat": lat, "lon": lon}
+                    }
+                )
                 
             data = response.json()
             
@@ -230,5 +169,12 @@ async def get_weather_forecast(lat: float = float(DEFAULT_LAT), lon: float = flo
                 "forecast": forecast[:5]  # Limit to 5 days
             }
     except Exception as e:
-        # Fallback to synthetic data on any error
-        return generate_synthetic_weather_data(lat, lon, city, iterate)
+        # Return error instead of synthetic data
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Failed to fetch weather forecast: {str(e)}",
+                "coordinates": {"lat": lat, "lon": lon},
+                "requested_city": city
+            }
+        )

@@ -1,11 +1,8 @@
-from fastapi import APIRouter, HTTPException
-import os
-from dotenv import load_dotenv
-import random
+from fastapi import APIRouter, HTTPException, Query, Depends
+from pydantic import BaseModel
+from typing import List, Optional
 from datetime import datetime, timedelta
-
-# Load environment variables
-load_dotenv()
+import uuid
 
 router = APIRouter(
     prefix="/api/alerts",
@@ -13,267 +10,202 @@ router = APIRouter(
     responses={404: {"description": "Not found"}},
 )
 
-# In-memory storage for alerts
-alert_database = {
-    "alerts": [],
-    "severity_levels": [
-        {"id": "info", "name": "Information", "color": "blue"},
-        {"id": "advisory", "name": "Advisory", "color": "yellow"},
-        {"id": "warning", "name": "Warning", "color": "orange"},
-        {"id": "emergency", "name": "Emergency", "color": "red"}
-    ],
-    "categories": [
-        {"id": "weather", "name": "Weather", "icon": "cloud"},
-        {"id": "traffic", "name": "Traffic", "icon": "car"},
-        {"id": "environment", "name": "Environment", "icon": "tree"},
-        {"id": "safety", "name": "Public Safety", "icon": "shield"},
-        {"id": "infrastructure", "name": "Infrastructure", "icon": "building"},
-        {"id": "health", "name": "Public Health", "icon": "medkit"},
-        {"id": "events", "name": "Events", "icon": "calendar"}
-    ]
-}
+# Models
+class Location(BaseModel):
+    lat: float
+    lon: float
+    radius: float = 5.0
+    address: Optional[str] = None
 
-def generate_synthetic_alerts():
-    """Generate synthetic alerts if database is empty"""
-    if len(alert_database["alerts"]) > 0:
-        return
-        
-    severity_levels = alert_database["severity_levels"]
-    categories = alert_database["categories"]
-    
-    # Sample alert templates
-    alert_templates = [
-        # Weather alerts
-        {
-            "category": "weather",
-            "titles": [
-                "Heavy Rain Expected",
-                "High Wind Warning",
-                "Heat Advisory",
-                "Flash Flood Warning",
-                "Thunderstorm Alert"
-            ],
-            "descriptions": [
-                "Heavy rainfall expected over the next 24 hours. Possible localized flooding in low-lying areas.",
-                "Wind gusts up to 60 mph expected. Secure loose outdoor objects and use caution when driving.",
-                "Temperatures expected to reach 95°F. Stay hydrated and limit outdoor activities.",
-                "Potential for flash flooding in the area due to heavy rainfall. Avoid flood-prone areas and driving through standing water.",
-                "Severe thunderstorms expected with potential for lightning and hail."
-            ],
-            "severity_weights": [0.3, 0.4, 0.2, 0.1]  # info, advisory, warning, emergency
-        },
-        # Traffic alerts
-        {
-            "category": "traffic",
-            "titles": [
-                "Major Road Closure",
-                "Traffic Accident",
-                "Highway Construction",
-                "Public Transit Disruption",
-                "Special Event Traffic"
-            ],
-            "descriptions": [
-                "Main Street closed between 5th and 10th Avenues due to water main repair. Expected to reopen at 6 PM.",
-                "Multi-vehicle accident on Highway 101 northbound. Expect delays of up to 30 minutes.",
-                "Lane closures on Central Bridge for maintenance work. Allow extra travel time.",
-                "Bus routes 10, 15, and 22 are re-routed due to street festival. Check transit app for details.",
-                "Heavy traffic expected around downtown due to concert at City Arena. Consider alternate routes."
-            ],
-            "severity_weights": [0.4, 0.3, 0.2, 0.1]  # info, advisory, warning, emergency
-        },
-        # Environment alerts
-        {
-            "category": "environment",
-            "titles": [
-                "Air Quality Alert",
-                "Water Conservation Request",
-                "Harmful Algae Bloom",
-                "Pollen Count Warning",
-                "Recycling Program Change"
-            ],
-            "descriptions": [
-                "Air quality index has reached unhealthy levels. Sensitive groups should limit outdoor exposure.",
-                "Voluntary water conservation requested due to drought conditions. Please limit non-essential water usage.",
-                "Harmful algae bloom detected at City Lake. Avoid water contact and keep pets away.",
-                "Pollen counts are extremely high today. Those with allergies should take precautions.",
-                "Changes to city recycling program effective next week. See city website for details."
-            ],
-            "severity_weights": [0.2, 0.4, 0.3, 0.1]  # info, advisory, warning, emergency
-        },
-        # Safety alerts
-        {
-            "category": "safety",
-            "titles": [
-                "Missing Person Alert",
-                "Suspicious Activity Report",
-                "Evacuation Order",
-                "Gas Leak Warning",
-                "Power Outage Alert"
-            ],
-            "descriptions": [
-                "Police seeking public assistance in locating missing 10-year-old child. Last seen wearing red jacket and blue jeans.",
-                "Reports of suspicious activity in the downtown area. Police have increased patrols.",
-                "Mandatory evacuation order for Riverside neighborhood due to rising flood waters.",
-                "Gas leak reported near Main and 5th streets. Area closed to traffic. Avoid the area.",
-                "Power outage affecting north side of city. Utility crews working to restore service."
-            ],
-            "severity_weights": [0.1, 0.2, 0.3, 0.4]  # info, advisory, warning, emergency
-        }
-    ]
-    
-    # Create synthetic alerts
-    alerts = []
-    now = datetime.now()
-    
-    # Create a mix of active and expired alerts
-    for i in range(20):
-        # Select random template
-        template = random.choice(alert_templates)
-        category_id = template["category"]
-        
-        # Select random title and matching description
-        title_idx = random.randint(0, len(template["titles"]) - 1)
-        title = template["titles"][title_idx]
-        description = template["descriptions"][title_idx]
-        
-        # Select severity with template-specific weights
-        severity = random.choices(
-            severity_levels,
-            weights=template["severity_weights"]
-        )[0]
-        
-        # Determine if alert is active or expired
-        is_active = random.random() < 0.7  # 70% chance of being active
-        
-        # Create timestamps
-        if is_active:
-            # Active alerts
-            created_at = now - timedelta(hours=random.randint(1, 24))
-            expires_at = now + timedelta(hours=random.randint(1, 48))
-        else:
-            # Expired alerts
-            created_at = now - timedelta(days=random.randint(2, 10))
-            expires_at = now - timedelta(hours=random.randint(1, 24))
-        
-        # Create the alert
-        alert = {
-            "id": f"alert-{i+1}",
-            "title": title,
-            "description": description,
-            "category_id": category_id,
-            "severity_id": severity["id"],
-            "created_at": created_at.isoformat(),
-            "expires_at": expires_at.isoformat(),
-            "is_active": is_active,
-            "affected_areas": ["Downtown", "North Side", "Waterfront"][random.randint(0, 2)],
-            "source": ["City Emergency Management", "Police Department", "Weather Service", "Department of Transportation"][random.randint(0, 3)],
-            "action_required": random.choice([
-                "No action required. For informational purposes only.",
-                "Be prepared and stay informed.",
-                "Take precautions and follow official guidance.",
-                "Take immediate action as directed."
-            ])
-        }
-        
-        alerts.append(alert)
-    
-    alert_database["alerts"] = alerts
+class AlertCategory(BaseModel):
+    id: str
+    name: str
+    icon: str
 
-@router.get("/")
-async def get_alerts(category_id: str = None, severity_id: str = None, active_only: bool = True):
-    """Get alerts, optionally filtered by category, severity, or active status"""
-    # Generate sample data if empty
-    if len(alert_database["alerts"]) == 0:
-        generate_synthetic_alerts()
+class SeverityLevel(BaseModel):
+    id: str
+    name: str
+    color: str
+
+class CityAlert(BaseModel):
+    id: str
+    title: str
+    description: str
+    created_at: str
+    expires_at: str
+    category_id: str
+    severity_id: str
+    location: Location
+    is_active: bool
+
+class AlertsData(BaseModel):
+    alerts: List[CityAlert]
+    categories: List[AlertCategory]
+    severity_levels: List[SeverityLevel]
+
+class SubscriptionRequest(BaseModel):
+    category_ids: List[str]
+    severity_ids: List[str]
+    location_enabled: bool = False
+    location: Optional[Location] = None
+
+# Sample data - in a real app this would come from a database
+CATEGORIES = [
+    AlertCategory(id="weather", name="Weather", icon="cloud"),
+    AlertCategory(id="traffic", name="Traffic", icon="directions_car"),
+    AlertCategory(id="safety", name="Public Safety", icon="security"),
+    AlertCategory(id="environment", name="Environment", icon="nature"),
+    AlertCategory(id="infrastructure", name="Infrastructure", icon="construction"),
+]
+
+SEVERITY_LEVELS = [
+    SeverityLevel(id="info", name="Information", color="#3498db"),
+    SeverityLevel(id="advisory", name="Advisory", color="#f39c12"),
+    SeverityLevel(id="warning", name="Warning", color="#e67e22"),
+    SeverityLevel(id="emergency", name="Emergency", color="#e74c3c"),
+]
+
+# Sample alerts - in a real app these would be stored in a database
+ALERTS = [
+    CityAlert(
+        id="1",
+        title="Flash Flood Warning",
+        description="Heavy rainfall expected. Possible flash flooding in low-lying areas.",
+        created_at=datetime.now().isoformat(),
+        expires_at=(datetime.now() + timedelta(days=1)).isoformat(),
+        category_id="weather",
+        severity_id="warning",
+        location=Location(lat=51.5074, lon=-0.1278, radius=10.0, address="Central London"),
+        is_active=True,
+    ),
+    CityAlert(
+        id="2",
+        title="Road Closure",
+        description="Main Street closed for construction between 1st and 3rd Avenue.",
+        created_at=datetime.now().isoformat(),
+        expires_at=(datetime.now() + timedelta(days=3)).isoformat(),
+        category_id="traffic",
+        severity_id="advisory",
+        location=Location(lat=51.5074, lon=-0.1278, radius=2.0, address="Main Street"),
+        is_active=True,
+    ),
+    CityAlert(
+        id="3",
+        title="Air Quality Advisory",
+        description="Elevated levels of air pollution. Sensitive groups should reduce outdoor activities.",
+        created_at=datetime.now().isoformat(),
+        expires_at=(datetime.now() + timedelta(hours=12)).isoformat(),
+        category_id="environment",
+        severity_id="advisory",
+        location=Location(lat=51.5074, lon=-0.1278, radius=20.0, address="Greater London"),
+        is_active=True,
+    ),
+]
+
+# In-memory subscriptions database
+USER_SUBSCRIPTIONS = {}
+
+@router.get("/", response_model=AlertsData)
+async def get_alerts(
+    category_id: Optional[List[str]] = Query(None),
+    severity_id: Optional[List[str]] = Query(None),
+    active: bool = True
+):
+    """Get all city alerts with optional filtering"""
+    filtered_alerts = ALERTS
     
-    alerts = alert_database["alerts"]
-    
-    # Apply filters
     if category_id:
-        alerts = [a for a in alerts if a["category_id"] == category_id]
+        filtered_alerts = [a for a in filtered_alerts if a.category_id in category_id]
+    
     if severity_id:
-        alerts = [a for a in alerts if a["severity_id"] == severity_id]
-    if active_only:
-        current_time = datetime.now().isoformat()
-        alerts = [a for a in alerts if a["is_active"] and a["expires_at"] > current_time]
+        filtered_alerts = [a for a in filtered_alerts if a.severity_id in severity_id]
     
-    # Sort by severity (emergency first) then by creation date (newest first)
-    severity_order = {
-        "emergency": 0,
-        "warning": 1,
-        "advisory": 2,
-        "info": 3
-    }
+    if active:
+        filtered_alerts = [a for a in filtered_alerts if a.is_active]
     
-    alerts = sorted(alerts, key=lambda x: (severity_order.get(x["severity_id"], 999), x["created_at"]), reverse=True)
-    
-    return {
-        "count": len(alerts),
-        "alerts": alerts
-    }
+    return AlertsData(
+        alerts=filtered_alerts,
+        categories=CATEGORIES,
+        severity_levels=SEVERITY_LEVELS
+    )
 
-@router.get("/categories")
-async def get_alert_categories():
-    """Get all available alert categories"""
-    return {"categories": alert_database["categories"]}
-
-@router.get("/severity-levels")
-async def get_severity_levels():
-    """Get all available severity levels"""
-    return {"severity_levels": alert_database["severity_levels"]}
-
-@router.get("/{alert_id}")
+@router.get("/{alert_id}", response_model=CityAlert)
 async def get_alert(alert_id: str):
     """Get a specific alert by ID"""
-    # Generate sample data if empty
-    if len(alert_database["alerts"]) == 0:
-        generate_synthetic_alerts()
-    
-    for alert in alert_database["alerts"]:
-        if alert["id"] == alert_id:
+    for alert in ALERTS:
+        if alert.id == alert_id:
             return alert
     
-    raise HTTPException(status_code=404, detail=f"Alert {alert_id} not found")
+    raise HTTPException(status_code=404, detail="Alert not found")
 
-@router.get("/summary/active")
-async def get_active_alerts_summary():
-    """Get a summary of currently active alerts by category and severity"""
-    # Generate sample data if empty
-    if len(alert_database["alerts"]) == 0:
-        generate_synthetic_alerts()
+@router.get("/nearby", response_model=dict)
+async def get_alerts_nearby(
+    lat: float,
+    lon: float,
+    radius: float = 5.0,
+    category_id: Optional[List[str]] = Query(None),
+    severity_id: Optional[List[str]] = Query(None),
+):
+    """Get alerts within a specified radius of coordinates"""
+    # In a real app, this would use geospatial queries
+    filtered_alerts = ALERTS
     
-    current_time = datetime.now().isoformat()
-    active_alerts = [a for a in alert_database["alerts"] if a["is_active"] and a["expires_at"] > current_time]
+    if category_id:
+        filtered_alerts = [a for a in filtered_alerts if a.category_id in category_id]
     
-    # Count by category
-    category_counts = {}
-    for alert in active_alerts:
-        cat_id = alert["category_id"]
-        if cat_id not in category_counts:
-            category_counts[cat_id] = 0
-        category_counts[cat_id] += 1
+    if severity_id:
+        filtered_alerts = [a for a in filtered_alerts if a.severity_id in severity_id]
     
-    # Count by severity
-    severity_counts = {}
-    for alert in active_alerts:
-        sev_id = alert["severity_id"]
-        if sev_id not in severity_counts:
-            severity_counts[sev_id] = 0
-        severity_counts[sev_id] += 1
-    
-    # Get highest severity alert
-    highest_severity_alert = None
-    severity_order = ["info", "advisory", "warning", "emergency"]
-    
-    for severity in reversed(severity_order):  # Check from highest to lowest
-        matching_alerts = [a for a in active_alerts if a["severity_id"] == severity]
-        if matching_alerts:
-            highest_severity_alert = matching_alerts[0]
-            break
+    # For demo purposes, just return alerts that might be nearby based on radius
+    nearby_alerts = []
+    for alert in filtered_alerts:
+        # In a real app, use proper geospatial calculations
+        # This is just a simple approximation based on the alert's own radius + requested radius
+        if alert.location.radius + radius >= 10:  # Pretend all alerts are within range if radius is large enough
+            nearby_alerts.append(alert)
     
     return {
-        "total_active": len(active_alerts),
-        "category_counts": category_counts,
-        "severity_counts": severity_counts,
-        "highest_severity_alert": highest_severity_alert
+        "alerts": nearby_alerts,
+        "location": {"lat": lat, "lon": lon, "radius": radius}
     }
+
+@router.post("/subscribe/{user_id}")
+async def subscribe_to_alerts(user_id: str, subscription: SubscriptionRequest):
+    """Subscribe to alerts for specific categories and severity levels"""
+    # In a real app, this would save to a database
+    USER_SUBSCRIPTIONS[user_id] = {
+        "category_ids": subscription.category_ids,
+        "severity_ids": subscription.severity_ids,
+        "location_enabled": subscription.location_enabled,
+        "location": subscription.location.dict() if subscription.location else None,
+        "created_at": datetime.now().isoformat()
+    }
+    
+    return {"status": "success", "message": "Subscription saved successfully"}
+
+@router.post("/unsubscribe/{user_id}")
+async def unsubscribe_from_alerts(user_id: str, subscription: Optional[SubscriptionRequest] = None):
+    """Unsubscribe from alerts"""
+    if user_id not in USER_SUBSCRIPTIONS:
+        raise HTTPException(status_code=404, detail="Subscription not found")
+    
+    if subscription is None:
+        # Unsubscribe from all
+        del USER_SUBSCRIPTIONS[user_id]
+        return {"status": "success", "message": "Unsubscribed from all alerts"}
+    
+    # Otherwise update subscription by removing specified categories/severities
+    current = USER_SUBSCRIPTIONS[user_id]
+    
+    if subscription.category_ids:
+        current["category_ids"] = [c for c in current["category_ids"] if c not in subscription.category_ids]
+    
+    if subscription.severity_ids:
+        current["severity_ids"] = [s for s in current["severity_ids"] if s not in subscription.severity_ids]
+    
+    # If no categories or severities left, remove the subscription
+    if not current["category_ids"] and not current["severity_ids"]:
+        del USER_SUBSCRIPTIONS[user_id]
+        return {"status": "success", "message": "No subscriptions left, removed completely"}
+    
+    return {"status": "success", "message": "Subscription updated"}

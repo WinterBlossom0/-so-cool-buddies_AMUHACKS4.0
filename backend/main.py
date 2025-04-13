@@ -10,6 +10,7 @@ import pandas as pd
 import numpy as np
 from dotenv import load_dotenv
 import logging
+from fastapi.staticfiles import StaticFiles
 
 # Import route modules
 from routers import weather, air_quality, sensors, waste, solar, transit, reports, alerts, chatbot, traffic
@@ -17,26 +18,45 @@ from routers import weather, air_quality, sensors, waste, solar, transit, report
 # Load environment variables
 load_dotenv()
 
-# Configure logging
+# Set up logging
 logging.basicConfig(
-    level=logging.INFO if os.getenv("DEBUG") == "True" else logging.WARNING,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[logging.StreamHandler()]
 )
-logger = logging.getLogger("smart_city")
+logger = logging.getLogger(__name__)
 
-# Validate critical environment variables
-required_keys = ["GEMINI_API_KEY", "TOMTOM_API_KEY", "OPENEI_SOLAR_API_KEY"]
-missing_keys = [key for key in required_keys if not os.getenv(key) or os.getenv(key) == f"your_{key.lower()}"]
+# Configure API keys for all services - strictly use environment variables
+API_KEYS = {
+    "openweathermap": os.getenv("OPENWEATHERMAP_API_KEY"),
+    "mapbox": os.getenv("MAPBOX_API_KEY"),
+    "google_maps": os.getenv("GOOGLE_MAPS_API_KEY"),
+}
+
+# Print API status to ensure keys are loaded
+for service, key in API_KEYS.items():
+    if key:
+        truncated_key = f"{key[:5]}...{key[-5:]}" if len(key) > 10 else key
+        logger.info(f"{service.upper()} API key configured: {truncated_key}")
+    else:
+        logger.warning(f"{service.upper()} API key not configured.")
+
+# Check for missing API keys
+missing_keys = [service for service, key in API_KEYS.items() if not key]
 if missing_keys:
-    logger.warning(f"Missing or invalid environment variables: {', '.join(missing_keys)}")
+    logger.warning(f"Missing API keys for: {', '.join(missing_keys)}.")
     logger.warning("Some features may not work correctly. Please check your .env file.")
 
-app = FastAPI(title="Smart City API")
+app = FastAPI(
+    title="Smart City API",
+    description="Backend API for Smart City Dashboard",
+    version="1.0.0"
+)
 
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["*"],  # In production, this should be more restricted
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -67,14 +87,38 @@ app.include_router(alerts.router)
 app.include_router(chatbot.router)
 app.include_router(traffic.router)
 
+# Mount static files (if needed)
 @app.get("/")
 async def root():
-    return {"message": "Smart City API is running"}
+    return {"message": "Welcome to Smart City API. Visit /docs for API documentation."}
 
 @app.get("/health")
 async def health_check():
-    return {"status": "healthy", "timestamp": datetime.now().isoformat()}
+    """Health check endpoint that also returns API status"""
+    return {
+        "status": "ok",
+        "api_status": {
+            service: "configured" if key else "missing" 
+            for service, key in API_KEYS.items()
+        }
+    }
 
+@app.get("/api/debug")
+async def api_debug():
+    """Debug endpoint to check all API key statuses"""
+    return {
+        "api_keys": {
+            "openweathermap": bool(API_KEYS["openweathermap"]),
+            "mapbox": bool(API_KEYS["mapbox"]),
+            "google_maps": bool(API_KEYS["google_maps"]),
+            "openaq": bool(os.getenv("OPENAQ_API_KEY"))
+        },
+        "env_loaded": bool(os.getenv("DEFAULT_LAT")),
+        "debug_mode": os.getenv("DEBUG") == "True",
+        "timestamp": datetime.now().isoformat()
+    }
+
+# For local development
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True)
